@@ -19,6 +19,11 @@ on:
     - cron: '20 10 * * *'
     - cron: '40 11 * * *'
   workflow_dispatch:
+    inputs:
+      force:
+        description: '强制重新抓取并发布（忽略"今天已发布"检查）'
+        type: boolean
+        default: false
   push:
     branches: [main]
 
@@ -48,11 +53,13 @@ jobs:
       - name: Already published today?
         id: pre
         shell: bash
+        env:
+          FORCE: ${{ inputs.force }}
         run: |
           TODAY=$(date +%F)
           PUB=$(head -n1 docs/version.txt 2>/dev/null || true)
-          echo "今天=$TODAY 已发布=${PUB:-无}"
-          if [ "$TODAY" = "$PUB" ]; then
+          echo "今天=$TODAY 已发布=${PUB:-无} 强制=$FORCE"
+          if [ "$TODAY" = "$PUB" ] && [ "$FORCE" != "true" ]; then
             echo "done=true" >> "$GITHUB_OUTPUT"
             echo "· $TODAY 的快照已发布，本次空转退出"
           else
@@ -121,6 +128,8 @@ jobs:
 
       - name: Assemble site
         if: steps.fetch.outcome == 'success'
+        env:
+          FORCE_PUBLISH: ${{ inputs.force }}
         run: node scripts/ci/build_site.js 2>&1 | tee build.log
 
       - name: Write run status
@@ -139,7 +148,16 @@ jobs:
             echo "没有变更，跳过提交"
           else
             git commit -m "chore: 运行记录 $(date '+%F %H:%M') [skip ci]"
-            git push
+            # 多个触发源可能同时跑：推送被拒时先 rebase 再重试，避免"数据生成成功但发布失败"
+            for i in 1 2 3; do
+              if git push; then
+                echo "✅ 推送成功"
+                break
+              fi
+              echo "⚠ 推送被拒，rebase 后重试（第 $i 次）"
+              git pull --rebase --autostash origin main || true
+              sleep 3
+            done
           fi
 
       # 兜底告警：最后一个时点（19:40）仍未发布当天快照 ⇒ 开一个 issue（GitHub 会发邮件）
