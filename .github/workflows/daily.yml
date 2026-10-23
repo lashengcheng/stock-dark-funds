@@ -7,17 +7,21 @@ on:
     #   "Scheduled events can be delayed during periods of high loads...
     #    High load times include the start of every hour.
     #    If the load is sufficiently high enough, some queued jobs may be dropped."
-    # 也就是说：整点触发最容易被丢弃，而且丢了不会补。本项目最初用 `0 2,4,6,8`，
+    # 整点触发最容易被丢弃，而且丢了不会补。本项目最初用 `0 2,4,6,8`，
     # 实测一整天 0 次触发（14:00 / 16:00 全部静默丢失）。
     #
-    # 对策：收盘后铺 6 个「非整点」冗余时点，任意一个成功即可，其余自动空转退出。
-    # 北京时间：15:35 / 16:10 / 16:50 / 17:30 / 18:20 / 19:40
-    - cron: '35 7 * * *'
-    - cron: '10 8 * * *'
+    # 因此：(1) 全部避开整点，用 :05 触发；
+    #       (2) 收盘后额外留两个重试时点；
+    #       (3) 真正的可靠性来自本机计划任务 StockDarkPublish 主动 workflow_dispatch。
+    #
+    # 北京时间：10:05 / 12:05 / 14:05 / 16:05，重试 16:50 / 17:40
+    # 注意：15:30 前（10/12/14 三次）A股未收盘，会跳过抓取，只记录状态。
+    - cron: '5 2 * * *'
+    - cron: '5 4 * * *'
+    - cron: '5 6 * * *'
+    - cron: '5 8 * * *'
     - cron: '50 8 * * *'
-    - cron: '30 9 * * *'
-    - cron: '20 10 * * *'
-    - cron: '40 11 * * *'
+    - cron: '40 9 * * *'
   workflow_dispatch:
     inputs:
       force:
@@ -160,8 +164,8 @@ jobs:
             done
           fi
 
-      # 兜底告警：最后一个时点（19:40）仍未发布当天快照 ⇒ 开一个 issue（GitHub 会发邮件）
-      # 只在 19:00 之后判断，避免前面几个时点正常重试时误报
+      # 兜底告警：最后一个时点（17:40）仍未发布当天快照 ⇒ 开一个 issue（GitHub 会发邮件）
+      # 只在 17:00 之后判断，避免前面几个时点正常重试时误报
       - name: Alert if still stale
         if: always() && steps.pre.outputs.done != 'true' && steps.gate.outputs.closed == 'true'
         env:
@@ -172,7 +176,7 @@ jobs:
           PUB=$(head -n1 docs/version.txt 2>/dev/null || echo none)
           H=$(date +%H)
           echo "今天=$TODAY 已发布=$PUB 当前小时=$H"
-          if [ "$PUB" != "$TODAY" ] && [ "$H" -ge 19 ]; then
+          if [ "$PUB" != "$TODAY" ] && [ "$H" -ge 17 ]; then
             EXIST=$(gh issue list --state open --search "数据未更新 in:title" --json number --jq 'length')
             if [ "$EXIST" = "0" ]; then
               BODY="站点仍停留在 **$PUB**，$TODAY 的快照在全部冗余时点后仍未发布。\n\n请检查：\n1. 仓库 Actions 页面最近一次 daily-snapshot 运行日志\n2. 根目录 status.json 里的 fetchOutcome 与 fetchLogTail\n3. 上游接口是否限流/不可达\n\n修好后手动运行一次：Actions → daily-snapshot → Run workflow。"
