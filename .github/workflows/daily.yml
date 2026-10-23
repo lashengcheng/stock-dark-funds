@@ -104,7 +104,7 @@ jobs:
           if git diff --cached --quiet; then
             echo "没有变更，跳过提交"
           else
-            git commit -m "data: snapshot $(date +%F) [skip ci]"
+            git commit -m "chore: 运行记录 $(date '+%F %H:%M') [skip ci]"
             git push
           fi
 
