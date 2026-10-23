@@ -189,10 +189,20 @@ async function findLatestDarkDate() {
     d.setDate(d.getDate() - 1);
   }
   for (const ymd of days) {
-    try {
-      const { rows } = await fetchDarkPage('0', ymd, 1);
-      if (rows.length > 0) return ymd;
-    } catch (e) { /* 继续往前找 */ }
+    // 上游偶发返回"空页"（不是报错）—— 若直接据此判定当天无数据，就会回退到上一交易日，
+    // 收盘后这种误判会导致整天不出数据（2026-10-23 实测：17:21 返回 10-22，17:24 又返回 10-23）。
+    // 因此对每个候选日重试两次，把偶发空页和真正的无数据区分开。
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const { rows } = await fetchDarkPage('0', ymd, 1);
+        if (rows.length > 0) return ymd;
+        if (attempt === 3) break;
+        await sleep(2000);
+      } catch (e) {
+        if (attempt === 3) break;
+        await sleep(2000);
+      }
+    }
   }
   return days[0];
 }
