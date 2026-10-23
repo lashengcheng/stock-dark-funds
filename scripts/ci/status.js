@@ -26,14 +26,17 @@ const shanghaiDate = new Intl.DateTimeFormat('en-CA', {
 
 const probe = readJson(path.join(ROOT, 'probe.json'));
 
-// 当天归档（fetch 成功时才会存在）
-const historyPath = path.join(ROOT, 'out', 'history', shanghaiDate + '.json');
-const history = readJson(historyPath);
-
+// 已发布快照日期（build_site.js 写出的 version.txt）
 let publishedDate = null;
 try {
   publishedDate = fs.readFileSync(path.join(ROOT, 'docs', 'version.txt'), 'utf8').split(/\r?\n/)[0].trim();
 } catch (e) { /* docs 尚未生成 */ }
+
+// 归档：优先当天；盘中手动触发会回退到上一交易日，此时取已发布快照那一天
+let history = readJson(path.join(ROOT, 'out', 'history', shanghaiDate + '.json'));
+if (!history && publishedDate) {
+  history = readJson(path.join(ROOT, 'out', 'history', publishedDate + '.json'));
+}
 
 const status = {
   generatedAt: now.toISOString(),
