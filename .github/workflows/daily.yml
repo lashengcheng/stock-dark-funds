@@ -1,0 +1,83 @@
+name: daily-snapshot
+
+on:
+  schedule:
+    # 07:40 UTC = 15:40 Asia/Shanghai
+    # A股 15:00 收盘，本项目要求 15:30 后数据才定型；更早运行会回退到上一交易日并直接跳过。
+    - cron: '40 7 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-snapshot
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    # 本工作流自己提交的数据更新带 [skip ci]，不重复触发
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[skip ci]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      # 关键：fetch_all.js 用「本地时间」判断是否已收盘，运行器默认 UTC 会导致误判
+      TZ: Asia/Shanghai
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Restore fetch cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            out/cache
+            out/history
+          key: dark-cache-${{ github.run_id }}
+          restore-keys: |
+            dark-cache-
+
+      - name: Probe upstream APIs
+        run: node scripts/ci/probe.js 2>&1 | tee probe.log
+
+      - name: Fetch snapshot
+        id: fetch
+        continue-on-error: true
+        run: node scripts/fetch_all.js 2>&1 | tee fetch.log
+
+      - name: Assemble site
+        if: steps.fetch.outcome == 'success'
+        run: node scripts/ci/build_site.js 2>&1 | tee build.log
+
+      - name: Write run status
+        if: always()
+        env:
+          FETCH_OUTCOME: ${{ steps.fetch.outcome }}
+        run: node scripts/ci/status.js
+
+      - name: Commit site and status
+        if: always()
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "没有变更，跳过提交"
+          else
+            git commit -m "data: snapshot $(date +%F) [skip ci]"
+            git push
+          fi
+
+      - name: Fail job if fetch failed
+        if: steps.fetch.outcome != 'success'
+        run: |
+          echo "::error::fetch_all.js 执行失败，详见上方日志与 status.json"
+          exit 1

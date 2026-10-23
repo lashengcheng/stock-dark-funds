@@ -1,1 +1,12 @@
-# init
+# 生成物：CI 每次重新抓取，不入库（docs/ 除外，它是发布目录）
+out/
+
+# 运行日志与探测产物
+*.log
+probe.json
+
+# 本地临时/工具产物
+.claude/
+decoded/
+node_modules/
+1
