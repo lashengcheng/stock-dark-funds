@@ -157,14 +157,8 @@ jobs:
           if [ "$PUB" != "$TODAY" ] && [ "$H" -ge 19 ]; then
             EXIST=$(gh issue list --state open --search "数据未更新 in:title" --json number --jq 'length')
             if [ "$EXIST" = "0" ]; then
-              gh issue create --title "⚠ 数据未更新：$TODAY" --body "站点仍停留在 **$PUB**，$TODAY 的快照在全部冗余时点后仍未发布。
-
-请检查：
-1. 仓库 Actions 页面最近一次 \`daily-snapshot\` 运行日志
-2. 根目录 \`status.json\` 里的 \`fetchOutcome\` 与 \`fetchLogTail\`
-3. 上游接口是否限流/不可达
-
-修好后手动运行一次：Actions → daily-snapshot → Run workflow。"
+              BODY="站点仍停留在 **$PUB**，$TODAY 的快照在全部冗余时点后仍未发布。\n\n请检查：\n1. 仓库 Actions 页面最近一次 daily-snapshot 运行日志\n2. 根目录 status.json 里的 fetchOutcome 与 fetchLogTail\n3. 上游接口是否限流/不可达\n\n修好后手动运行一次：Actions → daily-snapshot → Run workflow。"
+              gh issue create --title "⚠ 数据未更新：$TODAY" --body "$(printf '%b' "$BODY")"
             else
               echo "· 已有未关闭的告警 issue，跳过"
             fi
