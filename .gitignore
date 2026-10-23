@@ -10,3 +10,7 @@ probe.json
 decoded/
 node_modules/
 1
+
+# 外部触发器用的 GitHub token —— 绝对不能提交
+.gh-token
+.gh-token.xml
