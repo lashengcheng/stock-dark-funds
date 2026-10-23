@@ -11,6 +11,12 @@
 >
 > 运行健康度见根目录 `status.json`；若到 19:40 仍无当天数据，会自动开 issue 告警。
 > 页面右下角有「数据日期 / 发布时刻」角标，可直接判断新鲜度。
+>
+> **外部触发兜底**：实测 GitHub 的 `schedule` 在本仓库完全不触发（一整天 0 次），
+> 因此另配 Windows 计划任务 `StockDarkPublish`（每日 16:05 / 17:05）调用
+> `scripts/ci/trigger_github.js` 主动 `workflow_dispatch`。
+> token 用 Windows DPAPI 加密存于本机 `.gh-token.xml`（不入库），
+> 初始化：`scripts\ci\save-token.ps1 -Token <fine-grained PAT>`。
 
 ## 项目说明
 
