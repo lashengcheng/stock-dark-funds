@@ -58,6 +58,29 @@ fs.copyFileSync(path.join(OUT, latestHtml), path.join(DOCS, 'index.html'));
 console.log('✔ docs/index.html  ←  ' + latestHtml + ' (' +
   (fs.statSync(path.join(DOCS, 'index.html')).size / 1048576).toFixed(2) + ' MB)');
 
+// 注入「数据日期 + 发布时间」角标：页面一眼能看出新鲜度，不用去翻 version.txt
+{
+  const dst = path.join(DOCS, 'index.html');
+  const stamp = new Date().toLocaleString('zh-CN', {
+    timeZone: 'Asia/Shanghai', hour12: false, year: 'numeric', month: '2-digit',
+    day: '2-digit', hour: '2-digit', minute: '2-digit'
+  });
+  const badge =
+    '<div style="position:fixed;right:14px;bottom:14px;z-index:2147483647;' +
+    'background:#1a2030;color:#e8ecf4;border:1px solid #333b55;border-radius:8px;' +
+    'padding:8px 12px;font:12px/1.6 system-ui,-apple-system,\'Microsoft YaHei\',sans-serif;' +
+    'opacity:.93;box-shadow:0 4px 14px rgba(0,0,0,.35)">' +
+    '数据日期 <b style="color:#3b82f6">' + dateStr + '</b>' +
+    ' · 发布 ' + stamp + '</div>';
+  const html = fs.readFileSync(dst, 'utf8');
+  if (html.includes('</body>')) {
+    fs.writeFileSync(dst, html.replace('</body>', badge + '\n</body>'));
+    console.log('✔ 已注入新鲜度角标');
+  } else {
+    console.log('· 未找到 </body>，跳过角标注入');
+  }
+}
+
 if (fs.existsSync(path.join(OUT, latestCsv))) {
   fs.copyFileSync(path.join(OUT, latestCsv), path.join(DOCS, 'latest.csv'));
   console.log('✔ docs/latest.csv   ←  ' + latestCsv);

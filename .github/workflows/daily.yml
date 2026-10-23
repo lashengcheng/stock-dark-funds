@@ -2,17 +2,29 @@ name: daily-snapshot
 
 on:
   schedule:
-    # 北京时间 10:00 / 12:00 / 14:00 / 16:00（UTC 02:00 / 04:00 / 06:00 / 08:00）
-    # A股 15:00 收盘、15:30 后数据才定型：
-    #   10:00 / 12:00 / 14:00 三次会回退到上一交易日，因归档已存在而跳过（等同于健康检查 + 状态留痕）；
-    #   16:00 那次才会产出当天新数据并真正更新站点。
-    - cron: '0 2,4,6,8 * * *'
+    # ── 为什么不是一个 cron ────────────────────────────────────────────────
+    # GitHub 官方文档（Troubleshooting workflows）明确说明：
+    #   "Scheduled events can be delayed during periods of high loads...
+    #    High load times include the start of every hour.
+    #    If the load is sufficiently high enough, some queued jobs may be dropped."
+    # 也就是说：整点触发最容易被丢弃，而且丢了不会补。本项目最初用 `0 2,4,6,8`，
+    # 实测一整天 0 次触发（14:00 / 16:00 全部静默丢失）。
+    #
+    # 对策：收盘后铺 6 个「非整点」冗余时点，任意一个成功即可，其余自动空转退出。
+    # 北京时间：15:35 / 16:10 / 16:50 / 17:30 / 18:20 / 19:40
+    - cron: '35 7 * * *'
+    - cron: '10 8 * * *'
+    - cron: '50 8 * * *'
+    - cron: '30 9 * * *'
+    - cron: '20 10 * * *'
+    - cron: '40 11 * * *'
   workflow_dispatch:
   push:
     branches: [main]
 
 permissions:
   contents: write
+  issues: write
 
 concurrency:
   group: daily-snapshot
@@ -32,12 +44,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # 冗余时点的核心：今天已经发布过就立刻退出，不抓取、不提交、不产生噪音
+      - name: Already published today?
+        id: pre
+        shell: bash
+        run: |
+          TODAY=$(date +%F)
+          PUB=$(head -n1 docs/version.txt 2>/dev/null || true)
+          echo "今天=$TODAY 已发布=${PUB:-无}"
+          if [ "$TODAY" = "$PUB" ]; then
+            echo "done=true" >> "$GITHUB_OUTPUT"
+            echo "· $TODAY 的快照已发布，本次空转退出"
+          else
+            echo "done=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Setup Node
+        if: steps.pre.outputs.done != 'true'
         uses: actions/setup-node@v4
         with:
           node-version: '22'
 
       - name: Restore fetch cache
+        if: steps.pre.outputs.done != 'true'
         uses: actions/cache@v4
         with:
           path: |
@@ -48,16 +77,21 @@ jobs:
             dark-cache-
 
       - name: Probe upstream APIs
+        if: steps.pre.outputs.done != 'true'
         run: node scripts/ci/probe.js 2>&1 | tee probe.log
 
-      # 盘中（15:30 前）不抓取：当日行情未定型，脚本会回退到更早的交易日，
-      # 既产生不了当天数据，还可能把更旧的快照发布出去。盘中几次只做健康检查 + 状态留痕。
-      - name: Market closed?
+      # 收盘前 / 周末不抓取：当日行情未定型，脚本会回退到更早的交易日，
+      # 既拿不到当天数据，还可能把更旧的快照发布出去。
+      - name: Trading window?
         id: gate
+        if: steps.pre.outputs.done != 'true'
         shell: bash
         run: |
-          H=$(date +%H); M=$(date +%M)
-          if [ "$H" -gt 15 ] || { [ "$H" -eq 15 ] && [ "$M" -ge 30 ]; }; then
+          DOW=$(date +%u); H=$(date +%H); M=$(date +%M)
+          if [ "$DOW" -ge 6 ]; then
+            echo "closed=false" >> "$GITHUB_OUTPUT"
+            echo "· 周末（$(date +%F)），跳过抓取"
+          elif [ "$H" -gt 15 ] || { [ "$H" -eq 15 ] && [ "$M" -ge 30 ]; }; then
             echo "closed=true" >> "$GITHUB_OUTPUT"
             echo "· 当前 $(date +%H:%M)，已收盘，执行抓取"
           else
@@ -90,13 +124,13 @@ jobs:
         run: node scripts/ci/build_site.js 2>&1 | tee build.log
 
       - name: Write run status
-        if: always()
+        if: always() && steps.pre.outputs.done != 'true'
         env:
           FETCH_OUTCOME: ${{ steps.fetch.outcome }}
         run: node scripts/ci/status.js
 
       - name: Commit site and status
-        if: always()
+        if: always() && steps.pre.outputs.done != 'true'
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -106,6 +140,36 @@ jobs:
           else
             git commit -m "chore: 运行记录 $(date '+%F %H:%M') [skip ci]"
             git push
+          fi
+
+      # 兜底告警：最后一个时点（19:40）仍未发布当天快照 ⇒ 开一个 issue（GitHub 会发邮件）
+      # 只在 19:00 之后判断，避免前面几个时点正常重试时误报
+      - name: Alert if still stale
+        if: always() && steps.pre.outputs.done != 'true' && steps.gate.outputs.closed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          TODAY=$(date +%F)
+          PUB=$(head -n1 docs/version.txt 2>/dev/null || echo none)
+          H=$(date +%H)
+          echo "今天=$TODAY 已发布=$PUB 当前小时=$H"
+          if [ "$PUB" != "$TODAY" ] && [ "$H" -ge 19 ]; then
+            EXIST=$(gh issue list --state open --search "数据未更新 in:title" --json number --jq 'length')
+            if [ "$EXIST" = "0" ]; then
+              gh issue create --title "⚠ 数据未更新：$TODAY" --body "站点仍停留在 **$PUB**，$TODAY 的快照在全部冗余时点后仍未发布。
+
+请检查：
+1. 仓库 Actions 页面最近一次 \`daily-snapshot\` 运行日志
+2. 根目录 \`status.json\` 里的 \`fetchOutcome\` 与 \`fetchLogTail\`
+3. 上游接口是否限流/不可达
+
+修好后手动运行一次：Actions → daily-snapshot → Run workflow。"
+            else
+              echo "· 已有未关闭的告警 issue，跳过"
+            fi
+          else
+            echo "· 未到 19:00 或已发布，不告警"
           fi
 
       - name: Fail job if fetch failed
