@@ -19,10 +19,30 @@ const htmls = fs.readdirSync(OUT)
   .filter((f) => /^暗盘资金全景表_\d{4}-\d{2}-\d{2}\.html$/.test(f))
   .sort();
 
-if (!htmls.length) fail('out/ 下没有「暗盘资金全景表_日期.html」');
+// 已发布快照日期（version.txt 第一行）
+let published = null;
+try {
+  published = fs.readFileSync(path.join(DOCS, 'version.txt'), 'utf8').split(/\r?\n/)[0].trim();
+} catch (e) { /* 首次运行还没有 docs/ */ }
+
+// 本次没有产出（盘中回退 + 归档已存在 ⇒ fetch_all 直接跳过）：保留已发布页面，不算失败
+if (!htmls.length) {
+  if (published && fs.existsSync(path.join(DOCS, 'index.html'))) {
+    console.log('· 本次无新快照（盘中回退且归档已存在），保留已发布页面 ' + published);
+    process.exit(0);
+  }
+  fail('out/ 下没有「暗盘资金全景表_日期.html」，且 docs/ 也没有已发布页面');
+}
 
 const latestHtml = htmls[htmls.length - 1];
 const dateStr = latestHtml.match(/(\d{4}-\d{2}-\d{2})/)[1];
+
+// 幂等：同一天已发布过就不再重复提交（一天跑 4 次，只有新日期才真正更新站点）
+if (dateStr === published && !process.env.FORCE_PUBLISH) {
+  console.log('· 快照 ' + dateStr + ' 与已发布版本一致，跳过发布（FORCE_PUBLISH=1 可强制重发）');
+  process.exit(0);
+}
+
 const latestCsv = latestHtml.replace(/\.html$/, '.csv');
 
 fs.mkdirSync(DOCS, { recursive: true });
