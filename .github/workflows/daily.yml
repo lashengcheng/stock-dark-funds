@@ -51,7 +51,21 @@ jobs:
       - name: Fetch snapshot
         id: fetch
         continue-on-error: true
-        run: node scripts/fetch_all.js 2>&1 | tee fetch.log
+        shell: bash
+        run: |
+          # 必须开 pipefail：否则 `node | tee` 的退出码来自 tee，抓取失败会被误判为成功
+          set -o pipefail
+          for attempt in 1 2 3; do
+            echo "===== 抓取尝试 $attempt/3 ====="
+            if node scripts/fetch_all.js 2>&1 | tee -a fetch.log; then
+              echo "✅ 抓取成功（第 $attempt 次）"
+              exit 0
+            fi
+            echo "⚠ 第 $attempt 次失败；暗盘缓存已保留，重试可续传"
+            sleep 20
+          done
+          echo "✗ 三次尝试均失败"
+          exit 1
 
       - name: Assemble site
         if: steps.fetch.outcome == 'success'
