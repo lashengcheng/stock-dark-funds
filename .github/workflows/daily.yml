@@ -50,8 +50,24 @@ jobs:
       - name: Probe upstream APIs
         run: node scripts/ci/probe.js 2>&1 | tee probe.log
 
+      # 盘中（15:30 前）不抓取：当日行情未定型，脚本会回退到更早的交易日，
+      # 既产生不了当天数据，还可能把更旧的快照发布出去。盘中几次只做健康检查 + 状态留痕。
+      - name: Market closed?
+        id: gate
+        shell: bash
+        run: |
+          H=$(date +%H); M=$(date +%M)
+          if [ "$H" -gt 15 ] || { [ "$H" -eq 15 ] && [ "$M" -ge 30 ]; }; then
+            echo "closed=true" >> "$GITHUB_OUTPUT"
+            echo "· 当前 $(date +%H:%M)，已收盘，执行抓取"
+          else
+            echo "closed=false" >> "$GITHUB_OUTPUT"
+            echo "· 当前 $(date +%H:%M)，未到 15:30，跳过抓取（仅更新状态）"
+          fi
+
       - name: Fetch snapshot
         id: fetch
+        if: steps.gate.outputs.closed == 'true'
         continue-on-error: true
         shell: bash
         run: |
@@ -93,7 +109,7 @@ jobs:
           fi
 
       - name: Fail job if fetch failed
-        if: steps.fetch.outcome != 'success'
+        if: steps.fetch.outcome == 'failure'
         run: |
           echo "::error::fetch_all.js 执行失败，详见上方日志与 status.json"
           exit 1

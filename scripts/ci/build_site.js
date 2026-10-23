@@ -43,6 +43,13 @@ if (dateStr === published && !process.env.FORCE_PUBLISH) {
   process.exit(0);
 }
 
+// 单调保护：绝不允许用更旧的快照覆盖已发布的新快照
+// （盘中运行时 findLatestDarkDate 可能回溯到更早的交易日，曾导致站点从 10-22 倒退到 10-21）
+if (published && dateStr < published && !process.env.FORCE_PUBLISH) {
+  console.log('· 快照 ' + dateStr + ' 早于已发布版本 ' + published + '，拒绝回退发布');
+  process.exit(0);
+}
+
 const latestCsv = latestHtml.replace(/\.html$/, '.csv');
 
 fs.mkdirSync(DOCS, { recursive: true });
