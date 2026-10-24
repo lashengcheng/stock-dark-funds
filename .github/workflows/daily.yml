@@ -136,6 +136,25 @@ jobs:
           FORCE_PUBLISH: ${{ inputs.force }}
         run: node scripts/ci/build_site.js 2>&1 | tee build.log
 
+      # 每次运行都留一条"最后检查"记录（即使当天没有新数据），页面角标会显示它。
+      # 用来区分「系统正常但没有新数据」（周末/盘中）和「系统挂了」。
+      - name: Write last-run marker
+        if: always() && steps.pre.outputs.done != 'true'
+        shell: bash
+        run: |
+          mkdir -p docs
+          if [ "${{ steps.fetch.outcome }}" = "success" ]; then
+            S="已更新"
+          elif [ "${{ steps.fetch.outcome }}" = "skipped" ]; then
+            S="已跳过（未开盘或周末）"
+          elif [ "${{ steps.fetch.outcome }}" = "failure" ]; then
+            S="抓取失败"
+          else
+            S="未抓取"
+          fi
+          echo "$(date '+%F %H:%M') · $S · 数据 $(head -n1 docs/version.txt 2>/dev/null || echo 无)" > docs/last-run.txt
+          cat docs/last-run.txt
+
       - name: Write run status
         if: always() && steps.pre.outputs.done != 'true'
         env:

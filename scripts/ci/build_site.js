@@ -71,7 +71,14 @@ console.log('✔ docs/index.html  ←  ' + latestHtml + ' (' +
     'padding:8px 12px;font:12px/1.6 system-ui,-apple-system,\'Microsoft YaHei\',sans-serif;' +
     'opacity:.93;box-shadow:0 4px 14px rgba(0,0,0,.35)">' +
     '数据日期 <b style="color:#3b82f6">' + dateStr + '</b>' +
-    ' · 发布 ' + stamp + '</div>';
+    ' · 发布 ' + stamp +
+    '<span id="wb-last-check" style="color:#8892a8"></span></div>' +
+    // 每次运行都会写 docs/last-run.txt（即使当天没有新数据），页面据此显示"最后检查"，
+    // 用来区分「系统正常但没有新数据」和「系统挂了」——周末/盘中尤其有用。
+    '<script>(function(){fetch("./last-run.txt",{cache:"no-store"})' +
+    '.then(function(r){return r.ok?r.text():""})' +
+    '.then(function(t){var e=document.getElementById("wb-last-check");' +
+    'if(e&&t)e.textContent=" · 最后检查 "+t.trim()}).catch(function(){})})()</script>';
   const html = fs.readFileSync(dst, 'utf8');
   if (html.includes('</body>')) {
     fs.writeFileSync(dst, html.replace('</body>', badge + '\n</body>'));
