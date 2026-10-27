@@ -42,6 +42,23 @@ function esc(s) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+/**
+ * 把内部行对象转成前端表格使用的精简结构。
+ * 同时被 buildHtml（内嵌到页面）和 publish_history.js（生成按日期的 JSON）复用，
+ * 保证"当天页面"和"历史翻页"两边的列口径完全一致。
+ */
+function toClientRows(rows) {
+  return rows.map((r) => ({
+    code: r.code, name: r.name || '', lastDate: r.lastDate, price: r.price, pct: r.pct, rank: r.rank || 0,
+    anpanToday: r.anpanToday, mingpanToday: r.mingpanToday, zongTodayRaw: r.zongTodayRaw,
+    an30Raw: r.an30Raw, ming30Raw: r.ming30Raw, zong30Raw: r.zong30Raw,
+    hitRate: r.totalDays ? r.hitDays / r.totalDays : 0, hitLabel: r.hitDays + '/' + r.totalDays,
+    floatMv: r.floatMv, industry: r.industry || '', concepts: r.concepts || '',
+    aiScore: r.aiScore, strongLine: r.strongLine, fundSignal: r.fundSignal, comboAdvice: r.comboAdvice,
+    value: r.value, conclusion: r.conclusion
+  }));
+}
+
 /** 生成 HTML（样式沿用原页面的暗色主题变量，涨红跌绿） */
 function buildHtml(rows, meta) {
   const upClass = (v) => (v > 0 ? 'up' : v < 0 ? 'down' : 'flat');
@@ -104,6 +121,12 @@ tr:hover td{background:#1e2740}
 td.val{font-weight:700}
 .pick{color:#f59e0b;font-weight:700}.watch{color:#eab308}.pass{color:var(--muted)}
 .foot{color:var(--muted);font-size:12px;margin-top:14px;line-height:1.8}
+.datebar{display:none;gap:8px;align-items:center;margin:0 0 12px;flex-wrap:wrap}
+.datebar.on{display:flex}
+.datebar button,.datebar select{background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:13px;cursor:pointer}
+.datebar button:hover:not(:disabled),.datebar select:hover{border-color:var(--accent)}
+.datebar button:disabled{opacity:.35;cursor:default}
+.datebar .lbl{color:var(--muted);font-size:13px}
 </style>
 </head>
 <body>
@@ -118,6 +141,13 @@ td.val{font-weight:700}
   <div class="stat"><b style="color:#f59e0b">${meta.stat.pickAll}</b><span>入选合计</span></div>
   <div class="stat"><b>${meta.stat.avgAi}</b><span>平均AI评分</span></div>
   <div class="stat"><b>${meta.stat.avgVal}</b><span>平均投资价值</span></div>
+</div>
+<div class="datebar" id="datebar">
+  <span class="lbl">日期</span>
+  <button id="prevDay" type="button">‹ 前一日</button>
+  <select id="dateSel"></select>
+  <button id="nextDay" type="button">后一日 ›</button>
+  <span id="dateHint" style="color:var(--muted);font-size:12px"></span>
 </div>
 <div class="bar">
   <input id="flt" type="text" placeholder="筛选：代码 / 名称 / 行业 / 概念 / 结论…">
@@ -147,16 +177,8 @@ td.val{font-weight:700}
   命中天数 = 30个交易日中该股出现在暗盘榜单（暗/明资金非全0）的天数。金额单位：元（格式化为 亿/万）。
 </div>
 <script>
-var DATA = ${JSON.stringify(rows.map(r => ({
-  code: r.code, name: r.name || '', lastDate: r.lastDate, price: r.price, pct: r.pct, rank: r.rank || 0,
-  anpanToday: r.anpanToday, mingpanToday: r.mingpanToday, zongTodayRaw: r.zongTodayRaw,
-  an30Raw: r.an30Raw, ming30Raw: r.ming30Raw, zong30Raw: r.zong30Raw,
-  hitRate: r.totalDays ? r.hitDays / r.totalDays : 0, hitLabel: r.hitDays + '/' + r.totalDays,
-  floatMv: r.floatMv, industry: r.industry || '', concepts: r.concepts || '',
-  aiScore: r.aiScore, strongLine: r.strongLine, fundSignal: r.fundSignal, comboAdvice: r.comboAdvice,
-  value: r.value, conclusion: r.conclusion,
-  anToday: r.anToday, mingToday: r.mingToday, zongToday: r.zongToday, an30: r.an30, ming30: r.ming30, zong30: r.zong30
-}))).replace(/</g, '\\u003c')};
+var DATA = ${JSON.stringify(toClientRows(rows)).replace(/</g, '\\u003c')};
+var curDate = '${meta.dateLabel}';
 var sortKey = 'value', sortDir = -1;
 function money(v){ if(v==null||isNaN(v))return '--'; var s=v>=0?'+':'-',n=Math.abs(v);
   if(n>=1e8)return s+(n/1e8).toFixed(2)+'亿'; if(n>=1e4)return s+(n/1e4).toFixed(2)+'万'; return s+n.toFixed(2); }
@@ -211,9 +233,82 @@ document.querySelectorAll('th[data-k]').forEach(function(th){
 document.getElementById('flt').addEventListener('input', apply);
 document.getElementById('selConclusion').addEventListener('change', apply);
 apply();
+
+// ── 日期翻页 ────────────────────────────────────────────────────────────────
+// data/index.json 由 scripts/ci/publish_history.js 生成，dates 为降序（最新在前）。
+// 切换日期时拉取 data/<date>.json 重绘表格，并同步标题、统计卡与右下角角标。
+(function(){
+  var bar=document.getElementById('datebar');
+  var sel=document.getElementById('dateSel');
+  var prev=document.getElementById('prevDay');
+  var next=document.getElementById('nextDay');
+  var hint=document.getElementById('dateHint');
+  if(!bar||!sel) return;
+  var DATES=[];
+
+  function idx(d){ return DATES.indexOf(d); }
+  function sync(){
+    var i=idx(curDate);
+    prev.disabled = (i < 0) || (i >= DATES.length-1);  // 前一日 = 更旧 = 索引更大
+    next.disabled = (i <= 0);                          // 后一日 = 更新 = 索引更小
+    sel.value = curDate;
+  }
+  function refreshStats(rows){
+    var bs=document.querySelectorAll('.stats .stat b');
+    if(bs.length<5) return;
+    var total=rows.length,pick=0,pickAll=0,sa=0,sv=0;
+    rows.forEach(function(r){
+      var c=String(r.conclusion||'');
+      if(c.indexOf('入选')===0) pickAll++;
+      if(c.indexOf('入选（重点关注）')===0) pick++;
+      sa+=Number(r.aiScore)||0; sv+=Number(r.value)||0;
+    });
+    bs[0].textContent=total; bs[1].textContent=pick; bs[2].textContent=pickAll;
+    bs[3].textContent=total?Math.round(sa/total):0;
+    bs[4].textContent=total?Math.round(sv/total):0;
+  }
+  function setDateLabel(d){
+    var h1=document.querySelector('h1');
+    if(h1) h1.textContent='暗盘资金全景表 · '+d;
+    var b=document.getElementById('wb-data-date');
+    if(b) b.textContent=d;
+  }
+  function load(d){
+    if(!d||d===curDate) return;
+    hint.textContent='加载中 '+d+' …';
+    fetch('data/'+d+'.json',{cache:'no-store'}).then(function(r){
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      return r.json();
+    }).then(function(rows){
+      DATA=rows; curDate=d;
+      setDateLabel(d); refreshStats(rows);
+      hint.textContent='已切换到 '+d+'（'+rows.length+' 只）';
+      apply(); sync();
+    }).catch(function(e){
+      hint.textContent='加载失败：'+d+'（'+e.message+'）';
+    });
+  }
+  fetch('data/index.json',{cache:'no-store'}).then(function(r){
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    return r.json();
+  }).then(function(j){
+    DATES=(j&&j.dates)||[];
+    if(!DATES.length) return;
+    if(idx(curDate)<0) DATES.unshift(curDate);
+    sel.innerHTML=DATES.map(function(d){
+      return '<option value="'+d+'"'+(d===curDate?' selected':'')+'>'+d+'</option>';
+    }).join('');
+    bar.classList.add('on'); sync();
+    hint.textContent='共 '+DATES.length+' 个交易日可查';
+  }).catch(function(){ /* 无历史目录时静默隐藏 */ });
+
+  sel.addEventListener('change', function(){ load(sel.value); });
+  prev.addEventListener('click', function(){ var i=idx(curDate); if(i>=0&&i<DATES.length-1) load(DATES[i+1]); });
+  next.addEventListener('click', function(){ var i=idx(curDate); if(i>0) load(DATES[i-1]); });
+})();
 </script>
 </body>
 </html>`;
 }
 
-module.exports = { CSV_COLUMNS, buildCsv, buildHtml };
+module.exports = { CSV_COLUMNS, buildCsv, buildHtml, toClientRows };

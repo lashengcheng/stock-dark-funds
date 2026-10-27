@@ -136,6 +136,13 @@ jobs:
           FORCE_PUBLISH: ${{ inputs.force }}
         run: node scripts/ci/build_site.js 2>&1 | tee build.log
 
+      # 把当天归档同步成前端翻页用的 docs/data/<date>.json（保留最近 120 个交易日）
+      - name: Publish history data
+        if: steps.fetch.outcome == 'success'
+        env:
+          HISTORY_DAYS: '120'
+        run: node scripts/ci/publish_history.js 2>&1 | tee history.log
+
       # 每次运行都留一条"最后检查"记录（即使当天没有新数据），页面角标会显示它。
       # 用来区分「系统正常但没有新数据」（周末/盘中）和「系统挂了」。
       - name: Write last-run marker
