@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-07T08:29:34.338Z",
+  "generatedAt": "2026-11-07T10:59:08.845Z",
   "shanghaiDate": "2026-11-07",
   "fetchOutcome": "skipped",
   "publishedSnapshot": "2026-11-06",
@@ -11,28 +11,28 @@
       {
         "name": "腾讯行情 qt.gtimg.cn",
         "status": 200,
-        "ms": 1212,
+        "ms": 997,
         "reachable": true,
         "valid": true
       },
       {
         "name": "东财暗盘 quotederivates",
         "status": 200,
-        "ms": 989,
+        "ms": 1156,
         "reachable": true,
         "valid": false
       },
       {
         "name": "东财F10 emweb",
         "status": 200,
-        "ms": 1647,
+        "ms": 1408,
         "reachable": true,
         "valid": true
       },
       {
         "name": "腾讯日K web.ifzq",
         "status": 200,
-        "ms": 1574,
+        "ms": 1370,
         "reachable": true,
         "valid": true
       }
